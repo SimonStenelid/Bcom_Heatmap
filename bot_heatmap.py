@@ -140,13 +140,24 @@ class BotDetector:
         grid_data = np.array(scores_padded).reshape(rows, cols)
         grid_labels = np.array(sites_padded).reshape(rows, cols)
 
-        # Create custom annotations with site names and scores
+        # Create custom annotations with site names, scores, and total clicks
         annot_labels = np.empty((rows, cols), dtype=object)
         for i in range(rows):
             for j in range(cols):
                 if grid_labels[i, j] and not np.isnan(grid_data[i, j]):
                     site_name = grid_labels[i, j].replace('booking_', '').upper()
-                    annot_labels[i, j] = f'{site_name}\n{grid_data[i, j]:.1f}%'
+                    site_key = grid_labels[i, j]
+                    total_clicks = site_scores.loc[site_key, 'Total_Clicks']
+
+                    # Format clicks with K/M suffix for readability
+                    if total_clicks >= 1_000_000:
+                        clicks_str = f'{total_clicks/1_000_000:.1f}M'
+                    elif total_clicks >= 1_000:
+                        clicks_str = f'{total_clicks/1_000:.1f}K'
+                    else:
+                        clicks_str = f'{int(total_clicks)}'
+
+                    annot_labels[i, j] = f'{site_name}\n{grid_data[i, j]:.1f}%\n{clicks_str}'
                 else:
                     annot_labels[i, j] = ''
 
