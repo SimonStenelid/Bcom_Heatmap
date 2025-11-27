@@ -16,7 +16,7 @@ Bot Score Calculation:
 import argparse
 import sys
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -38,7 +38,7 @@ class BotDetector:
 
     def analyze_data(self, df):
         """
-        Analyze data to identify bots and calculate bot scores.
+        Analyze data to identify bots and calculate bot scores with volume weighting.
 
         Args:
             df: DataFrame with columns [Site, User_Agent, Entry_Clicks, Orders]
@@ -58,18 +58,38 @@ class BotDetector:
         # Get bot data
         bot_df = df[df['Is_Bot']].copy()
 
-        # Calculate bot score per site
+        # Calculate volume weight for each bot user agent
+        # Higher click volumes get exponentially higher weights
+        # Weight = log10(clicks / min_clicks + 1) to emphasize high-volume bots
+        bot_df['Volume_Weight'] = np.log10(bot_df['Entry_Clicks'] / self.min_clicks + 1)
+        bot_df['Weighted_Clicks'] = bot_df['Entry_Clicks'] * bot_df['Volume_Weight']
+
+        # Calculate weighted bot score per site
         site_total_clicks = df.groupby('Site')['Entry_Clicks'].sum()
         site_bot_clicks = bot_df.groupby('Site')['Entry_Clicks'].sum()
+        site_weighted_bot_clicks = bot_df.groupby('Site')['Weighted_Clicks'].sum()
 
         site_scores = pd.DataFrame({
             'Total_Clicks': site_total_clicks,
-            'Bot_Clicks': site_bot_clicks
+            'Bot_Clicks': site_bot_clicks,
+            'Weighted_Bot_Clicks': site_weighted_bot_clicks
         }).fillna(0)
 
-        site_scores['Bot_Score'] = (
-            site_scores['Bot_Clicks'] / site_scores['Total_Clicks'] * 100
-        ).round(2)
+        # Normalize weighted clicks to a 0-100 scale per site
+        # This gives us a weighted bot score where high-volume bots have more impact
+        max_possible_weight = np.log10(site_scores['Total_Clicks'] / self.min_clicks + 1)
+        weighted_bot_score = (
+            (site_scores['Weighted_Bot_Clicks'] / (site_scores['Total_Clicks'] * max_possible_weight)) * 100
+        ).fillna(0)
+
+        # Calculate raw percentage
+        raw_bot_pct = (site_scores['Bot_Clicks'] / site_scores['Total_Clicks'] * 100).fillna(0)
+
+        # Use the maximum of weighted and raw score to ensure high-volume bots are emphasized
+        site_scores['Bot_Score'] = pd.DataFrame({
+            'weighted': weighted_bot_score,
+            'raw': raw_bot_pct
+        }).max(axis=1).round(2)
 
         # Count bot user agents per site
         bot_count_per_site = bot_df.groupby('Site').size()
@@ -160,10 +180,10 @@ class BotDetector:
         ax.set_xticks([])
         ax.set_yticks([])
 
-        # Set title with today's date
-        today = datetime.now().strftime('%Y-%m-%d')
+        # Set title with yesterday's date (since data represents previous complete day)
+        yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
         ax.set_title(
-            f'Booking Bot Map ({today})',
+            f'Booking Bot Map ({yesterday})',
             fontsize=14,
             fontweight='bold',
             pad=20
@@ -270,6 +290,18 @@ def main():
     df.columns = ['Site', 'User_Agent', 'Entry_Clicks', 'Orders']
 
     print(f"Loaded {len(df):,} rows")
+
+    # Filter out rows with null/empty User_Agent
+    initial_count = len(df)
+    df = df[df['User_Agent'].notna() & (df['User_Agent'].str.strip() != '')]
+    filtered_count = initial_count - len(df)
+
+    if filtered_count > 0:
+        print(f"Filtered out {filtered_count:,} rows with null/empty User Agent")
+
+    if len(df) == 0:
+        print("Error: No valid data remaining after filtering", file=sys.stderr)
+        sys.exit(1)
 
     # Initialize detector
     detector = BotDetector(

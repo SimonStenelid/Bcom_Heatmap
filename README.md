@@ -1,5 +1,7 @@
 # Bot Detection Heatmap
 
+Bot score represents the percentage of a site's clicks coming from user agents classified as bots based on volume and conversion thresholds.
+
 ## Quick Start
 
 ```bash
